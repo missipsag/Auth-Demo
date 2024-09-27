@@ -3,6 +3,8 @@ const ejs = require("ejs");
 const bcrypt = require("bcrypt");
 const User = require("./models/user");
 const mongoose = require("mongoose");
+const session = require("express-session");
+
 
 //connect to datebase
 mongoose.connect("mongodb://localhost:27017/auth-demo");
@@ -18,10 +20,29 @@ const errorHandler = function  (err) {
   console.error(err); 
 }
 
+//require login middleware
+const requireLogin = (req, res, next) => {
+  if( ! req.session.user_id) return res.redirect("/login");
+  else next();
+}
+
 const app = express();
+
 app.set('view engine', 'ejs');
 app.set("views", 'views');
 app.use(express.urlencoded({ extended : true }));
+
+ const sessionConfig = {
+  secret : 'notasogoodsecret',
+  resave : false,
+  saveUninitialized : true,
+  cookie : {
+     expires : Date.now() +  1000 * 60 * 60 * 24 * 7,
+     maxAge : 1000 * 60 * 60 * 24 * 7, 
+     httpOnly : true
+   }  
+ }
+app.use(session(sessionConfig));
 
 app.get('/', (req, res) => {
   res.render("home");
@@ -32,10 +53,10 @@ app.get('/login', (req, res) => {
 })
 
 app.post('/login/auth' , async (req, res) => {
-  const user = await User.findOne({'username' : req.body.username});
-  let isUser = await bcrypt.compare(req.body.password, user.password);
-  if (isUser) {
-    res.send("You are logged in !!!");
+  const foundUser = await User.findAndValidate(req.body.username, req.body.password);
+  if (foundUser) {
+    req.session.user_id = foundUser._id;
+    res.render("after-login-page");
   } else {
     //if not a user, render the register page
     res.render('register');
@@ -49,9 +70,7 @@ app.get("/register", (req, res) => {
 app.post("/register", async (req, res, next) => {
  try {
   const { password , username } = req.body;
-  let pw = await bcrypt.hash(password, 12);
-  //save new user to db
-  const newUser = new User({'username' : username ,'password' :  pw});
+  const newUser = new User({'username' : username ,'password' :  password});
   await newUser.save();
   res.redirect("/home");
 } catch(err) {
@@ -59,8 +78,14 @@ app.post("/register", async (req, res, next) => {
 }
 })
 
-app.get("/secret", (req, res) => {
-  res.send("THIS IS SECRET ! YOU CANNOT SEE ME UNLESS YOU ARE LOGGED IN !")
+// see if our req.session.user_id is working
+app.get("/secret", requireLogin,  (req, res) => {
+  res.send("This page is secret !! you can't access it unless you're logged in");
+})
+
+app.post("/logout", (req, res ) => {
+  req.session.user_id = null;
+  res.redirect("/login");
 })
 
 app.use(errorHandler);
